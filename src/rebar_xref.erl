@@ -46,49 +46,55 @@
 
 xref(Config, _) ->
     %% Spin up xref
-    {ok, _} = xref:start(xref),
-    ok = xref:set_library_path(xref, code_path(Config)),
+    try
+        {ok, _} = xref:start(xref),
+        ok = xref:set_library_path(xref, code_path(Config)),
 
-    xref:set_default(xref, [{warnings,
+        xref:set_default(xref, [{warnings,
                              rebar_config:get(Config, xref_warnings, false)},
                             {verbose, rebar_log:is_verbose(Config)}]),
 
-    {ok, _} = xref:add_directory(xref, "ebin"),
+        {ok, _} = xref:add_directory(xref, "ebin"),
 
-    %% Save the code path prior to doing anything
-    OrigPath = code:get_path(),
-    true = code:add_path(rebar_utils:ebin_dir()),
+        %% Save the code path prior to doing anything
+        OrigPath = code:get_path(),
+        true = code:add_path(rebar_utils:ebin_dir()),
 
-    %% Get list of xref checks we want to run
-    ConfXrefChecks = rebar_config:get(Config, xref_checks,
+        %% Get list of xref checks we want to run
+        ConfXrefChecks = rebar_config:get(Config, xref_checks,
                                       [exports_not_used,
                                        undefined_function_calls]),
 
-    SupportedXrefs = [undefined_function_calls, undefined_functions,
+        SupportedXrefs = [undefined_function_calls, undefined_functions,
                       locals_not_used, exports_not_used,
                       deprecated_function_calls, deprecated_functions],
 
-    XrefChecks = sets:to_list(sets:intersection(
+        XrefChecks = sets:to_list(sets:intersection(
                                 sets:from_list(SupportedXrefs),
                                 sets:from_list(ConfXrefChecks))),
 
-    %% Run xref checks
-    XrefNoWarn = xref_checks(XrefChecks),
+        %% Run xref checks
+        XrefNoWarn = xref_checks(XrefChecks),
 
-    %% Run custom queries
-    QueryChecks = rebar_config:get(Config, xref_queries, []),
-    QueryNoWarn = lists:all(fun check_query/1, QueryChecks),
+        %% Run custom queries
+        QueryChecks = rebar_config:get(Config, xref_queries, []),
+        QueryNoWarn = lists:all(fun check_query/1, QueryChecks),
 
-    %% Restore the original code path
-    true = rebar_utils:cleanup_code_path(OrigPath),
+        %% Restore the original code path
+        true = rebar_utils:cleanup_code_path(OrigPath),
 
-    %% Stop xref
-    stopped = xref:stop(xref),
+        %% Stop xref
+        stopped = xref:stop(xref),
 
-    case lists:member(false, [XrefNoWarn, QueryNoWarn]) of
-        true ->
-            ?FAIL;
-        false ->
+        case lists:member(false, [XrefNoWarn, QueryNoWarn]) of
+            true ->
+                ?FAIL;
+            false ->
+                ok
+        end
+    catch
+        error:{badmatch,{error,xref_utils,{file_error,"ebin",enoent}}} ->
+            stopped = xref:stop(xref),
             ok
     end.
 

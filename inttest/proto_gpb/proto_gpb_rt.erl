@@ -55,15 +55,44 @@ files() ->
     [
      {copy, "../../rebar", "rebar"},
      {copy, "rebar.config", "rebar.config"},
+     {copy, "rebar2.config", "rebar2.config"},
+     {copy, "rebar.bad.config", "rebar.bad.config"},
      {copy, "include", "include"},
      {copy, "src", "src"},
+     {copy, "proto", "proto"},
+     {copy, "proto.bad", "proto.bad"},
      {copy, "mock", "deps"},
      {create, "ebin/foo.app", app(foo, ?MODULES ++ ?GENERATED_MODULES)}
     ].
 
 run(_Dir) ->
-    ?assertMatch({ok, _}, retest_sh:run("./rebar clean", [])),
-    ?assertMatch({ok, _}, retest_sh:run("./rebar compile", [])),
+    % perform test obtaining the .proto files from src dir
+    ok = run_from_dir(success_expected, "src", "rebar.config"),
+    % perform test obtaining the .proto files from proto dir
+    ok = run_from_dir(success_expected, "proto", "rebar2.config"),
+    % perform a test where a failure is expected
+    ok = run_from_dir(fail_expected, "proto.bad", "rebar.bad.config").
+
+run_from_dir(fail_expected, _ProtoDir, ConfigFile) ->
+    %% we expect a failure to happen, however rebar should not crash;
+    %% We make sure of that by scanning the error.
+    {error, {stopped, {1, Error}}} = retest_sh:run("./rebar --config "
+                                                   ++ ConfigFile
+                                                   ++ " compile",
+                                                   []),
+    %% No matches of the string 'EXIT' should occur, these
+    %% indicate a rebar crash and not a exit with error.
+    0 = string:str(lists:flatten(Error), "'EXIT'"),
+    ok;
+run_from_dir(success_expected, ProtoDir, ConfigFile) ->
+    ?assertMatch({ok, _}, retest_sh:run("./rebar --config "
+                                        ++ ConfigFile
+                                        ++ " clean",
+                                        [])),
+    ?assertMatch({ok, _}, retest_sh:run("./rebar --config "
+                                        ++ ConfigFile
+                                        ++ " compile",
+                                        [])),
     %% Foo includes test_gpb.hrl,
     %% So if it compiled, that also means gpb succeeded in
     %% generating the test_gpb.hrl file, and also that it generated
@@ -72,21 +101,30 @@ run(_Dir) ->
 
     ?DEBUG("Verifying recompilation~n", []),
     TestErl = hd(generated_erl_files()),
-    TestProto = hd(source_proto_files()),
+    TestProto = hd(source_proto_files(ProtoDir)),
     make_proto_newer_than_erl(TestProto, TestErl),
     TestMTime1 = read_mtime(TestErl),
-    ?assertMatch({ok, _}, retest_sh:run("./rebar compile", [])),
+    ?assertMatch({ok, _}, retest_sh:run("./rebar --config "
+                                        ++ ConfigFile
+                                        ++ " compile",
+                                        [])),
     TestMTime2 = read_mtime(TestErl),
     ?assert(TestMTime2 > TestMTime1),
 
     ?DEBUG("Verifying recompilation with no changes~n", []),
     TestMTime3 = read_mtime(TestErl),
-    ?assertMatch({ok, _}, retest_sh:run("./rebar compile", [])),
+    ?assertMatch({ok, _}, retest_sh:run("./rebar --config "
+                                        ++ ConfigFile
+                                        ++ " compile",
+                                        [])),
     TestMTime4 = read_mtime(TestErl),
     ?assert(TestMTime3 =:= TestMTime4),
 
     ?DEBUG("Verify cleanup~n", []),
-    ?assertMatch({ok, _}, retest_sh:run("./rebar clean", [])),
+    ?assertMatch({ok, _}, retest_sh:run("./rebar --config "
+                                        ++ ConfigFile
+                                        ++ " clean",
+                                        [])),
     ok = check_files_deleted(),
     ok.
 
@@ -110,8 +148,8 @@ generated_hrl_files() ->
 generated_beam_files() ->
     add_dir("ebin", add_ext(?GENERATED_MODULES, ".beam")).
 
-source_proto_files() ->
-    add_dir("src", ?SOURCE_PROTO_FILES).
+source_proto_files(ProtoDir) ->
+    add_dir(ProtoDir, ?SOURCE_PROTO_FILES).
 
 file_does_not_exist(F) ->
     not filelib:is_regular(F).

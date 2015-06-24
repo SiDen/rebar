@@ -72,6 +72,8 @@
 %% for internal use only
 -export([otp_release/0]).
 
+-dialyzer({no_missing_calls, escript_foldl/3}).
+
 -include("rebar.hrl").
 
 %% ====================================================================
@@ -235,9 +237,11 @@ prop_check(false, Msg, Args) -> ?ABORT(Msg, Args).
 
 %% Convert all the entries in the code path to absolute paths.
 expand_code_path() ->
-    CodePath = lists:foldl(fun(Path, Acc) ->
-                                   [filename:absname(Path) | Acc]
-                           end, [], code:get_path()),
+    CodePath = lists:foldl(
+                 fun(Path, Acc) ->
+                         Path1 = rmemo:call(filename, absname, [Path]),
+                         [Path1 | Acc]
+                 end, [], code:get_path()),
     code:set_path(lists:reverse(CodePath)).
 
 %%
@@ -254,8 +258,8 @@ expand_env_variable(InStr, VarName, RawVarValue) ->
             ReOpts = [global, unicode, {return, list}],
             VarValue = re:replace(RawVarValue, "\\\\", "\\\\\\\\", ReOpts),
             %% Use a regex to match/replace:
-            %% Given variable "FOO": match $FOO\s | $FOOeol | ${FOO}
-            RegEx = io_lib:format("\\\$(~s(\\s|$)|{~s})", [VarName, VarName]),
+            %% Given variable "FOO", match $FOO\W | $FOOeol | ${FOO}.
+            RegEx = io_lib:format("\\\$(~s(\\W|$)|{~s})", [VarName, VarName]),
             re:replace(InStr, RegEx, [VarValue, "\\2"], ReOpts)
     end.
 
@@ -401,20 +405,47 @@ patch_env(Config, [E | Rest]) ->
 %% ====================================================================
 
 otp_release() ->
-    otp_release1(erlang:system_info(otp_release)).
+    rmemo:call(fun otp_release_1/1, [(erlang:system_info(otp_release))]).
 
 %% If OTP <= R16, otp_release is already what we want.
-otp_release1([$R,N|_]=Rel) when is_integer(N) ->
+otp_release_1([$R,N|_]=Rel) when is_integer(N) ->
     Rel;
 %% If OTP >= 17.x, erlang:system_info(otp_release) returns just the
 %% major version number, we have to read the full version from
 %% a file. See http://www.erlang.org/doc/system_principles/versions.html
-%% Read vsn string from the 'OTP_VERSION' file and return as list without
-%% the "\n".
-otp_release1(Rel) ->
-    File = filename:join([code:root_dir(), "releases", Rel, "OTP_VERSION"]),
-    {ok, Vsn} = file:read_file(File),
+otp_release_1(Rel) ->
+    Files = [
+             filename:join([code:root_dir(), "releases", Rel, "OTP_VERSION"]),
+             filename:join([code:root_dir(), "OTP_VERSION"])
+            ],
 
+    %% It's possible that none of the above files exist on the filesystem, in
+    %% which case, we're just going to rely on the provided "Rel" (which should
+    %% just be the value of `erlang:system_info(otp_release)`).
+    case read_otp_version_files(Files) of
+        undefined ->
+            warn_missing_otp_version_file(Rel),
+            Rel;
+        Vsn ->
+            Vsn
+    end.
+
+warn_missing_otp_version_file(Rel) ->
+    ?WARN("No OTP_VERSION file found. Using version string ~p.~n", [Rel]).
+
+%% Try to open each file path provided, and if any of them exist on the
+%% filesystem, read their contents and return the value of the first one found.
+read_otp_version_files([]) ->
+    undefined;
+read_otp_version_files([File | Rest]) ->
+    case file:read_file(File) of
+        {ok, Vsn} -> normalize_otp_version(Vsn);
+        {error, enoent} -> read_otp_version_files(Rest)
+    end.
+
+%% Takes the Version binary as read from the OTP_VERSION file and strips any
+%% trailing "**" and trailing "\n", returning the string as a list.
+normalize_otp_version(Vsn) ->
     %% It's fine to rely on the binary module here because we can
     %% be sure that it's available when the otp_release string does
     %% not begin with $R.

@@ -86,15 +86,15 @@ xref(Config, _) ->
         %% Stop xref
         stopped = xref:stop(xref),
 
-        case lists:member(false, [XrefNoWarn, QueryNoWarn]) of
-            true ->
-                ?FAIL;
-            false ->
-                ok
-        end
-    catch
-        error:{badmatch,{error,xref_utils,{file_error,"ebin",enoent}}} ->
-            stopped = xref:stop(xref),
+    case lists:member(false, [XrefNoWarn, QueryNoWarn]) of
+        true ->
+            case rebar_config:get_xconf(Config, keep_going, false) of
+                false ->
+                    ?FAIL;
+                true ->
+                    ok
+            end;
+        false ->
             ok
     end.
 
@@ -188,7 +188,8 @@ keyall(Key, List) ->
     lists:flatmap(fun({K, L}) when Key =:= K -> L; (_) -> [] end, List).
 
 get_behaviour_callbacks(exports_not_used, Attributes) ->
-    [B:behaviour_info(callbacks) || B <- keyall(behaviour, Attributes)];
+    [B:behaviour_info(callbacks) ||
+        B <- keyall(behaviour, Attributes) ++ keyall(behavior, Attributes)];
 get_behaviour_callbacks(_XrefCheck, _Attributes) ->
     [].
 

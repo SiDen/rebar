@@ -4,7 +4,10 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([test/0]).
+-export([test/0, parse_transform/2]).
 
 test() ->
     ?debugHere.
+
+parse_transform(Forms, _Options) ->
+    Forms.
